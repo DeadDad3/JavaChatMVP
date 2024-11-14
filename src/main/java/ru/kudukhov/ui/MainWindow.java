@@ -1,28 +1,33 @@
 package ru.kudukhov.ui;
 
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import ru.kudukhov.network.ClientSession;
 import ru.kudukhov.network.packets.ListPacket.CorrespondentItem;
 import ru.kudukhov.network.packets.MessagePacket;
 
 public class MainWindow extends JFrame {
-  private JTextArea chatArea;
+  private JPanel chatPanel;
+  private JScrollPane chatScrollPane;
   private JTextField messageField;
   private JButton sendButton;
-  private JList<String> userList; // Панель для отображения списка пользователей
-  private DefaultListModel<String> userListModel; // Модель данных для списка пользователей
+  private JList<String> userList;
+  private DefaultListModel<String> userListModel;
   private ClientSession clientSession;
   private String username;
 
-  // Локальное хранение ID пользователей и логинов
   private Map<String, Integer> userIdMap = new HashMap<>();
-  private String selectedUser; // Выбранный пользователь для отправки сообщения
+  private Map<String, List<String>> chatHistories = new HashMap<>();
+  private String selectedUser;
 
   public MainWindow(ClientSession clientSession, String username) {
     this.clientSession = clientSession;
@@ -35,14 +40,15 @@ public class MainWindow extends JFrame {
   }
 
   private void initUI() {
-    // Основное окно чата
-    chatArea = new JTextArea();
-    chatArea.setEditable(false);
-    chatArea.setLineWrap(true);
+    chatPanel = new JPanel();
+    chatPanel.setLayout(new BoxLayout(chatPanel, BoxLayout.Y_AXIS));
+    chatPanel.setBackground(new Color(25, 34, 49));
+    chatPanel.setBorder(new EmptyBorder(5, 10, 5, 10));
 
-    JScrollPane scrollPane = new JScrollPane(chatArea);
+    chatScrollPane = new JScrollPane(chatPanel);
+    chatScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+    chatScrollPane.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Color.GRAY));
 
-    // Поле для ввода сообщений
     messageField = new JTextField();
     sendButton = new JButton("Отправить");
 
@@ -50,46 +56,54 @@ public class MainWindow extends JFrame {
     inputPanel.add(messageField, BorderLayout.CENTER);
     inputPanel.add(sendButton, BorderLayout.EAST);
 
-    // Боковая панель для списка пользователей
     userListModel = new DefaultListModel<>();
     userList = new JList<>(userListModel);
+    userList.setFixedCellHeight(50);
+    userList.setFont(new Font("Arial", Font.PLAIN, 16));
     JScrollPane userScrollPane = new JScrollPane(userList);
+    userScrollPane.setBorder(new EmptyBorder(0, 5, 0, 5));
 
-    // Добавляем обработчик выбора пользователя в списке
-    userList.addMouseListener(new MouseAdapter() {
+    add(chatScrollPane, BorderLayout.CENTER);
+    add(inputPanel, BorderLayout.SOUTH);
+    add(userScrollPane, BorderLayout.WEST);
+
+    sendButton.addActionListener(e -> sendMessage());
+
+    messageField.addKeyListener(new KeyAdapter() {
       @Override
-      public void mouseClicked(MouseEvent e) {
-        selectedUser = userList.getSelectedValue(); // Устанавливаем выбранного пользователя
+      public void keyPressed(KeyEvent e) {
+        if (e.getKeyCode() == KeyEvent.VK_ENTER) {
+          sendMessage();
+        }
       }
     });
 
-    // Основное расположение компонентов
-    add(scrollPane, BorderLayout.CENTER);
-    add(inputPanel, BorderLayout.SOUTH);
-    add(userScrollPane, BorderLayout.EAST);
-
-    // Обработчик кнопки отправки
-    sendButton.addActionListener(e -> sendMessage());
+    userList.addMouseListener(new MouseAdapter() {
+      @Override
+      public void mouseClicked(MouseEvent e) {
+        selectedUser = userList.getSelectedValue();
+        displayChatHistory(selectedUser);
+      }
+    });
   }
 
   private void sendMessage() {
     String message = messageField.getText().trim();
     if (!message.isEmpty() && selectedUser != null) {
       try {
-        // Получаем ID выбранного пользователя для отправки сообщения
         Integer correspondentId = userIdMap.get(selectedUser);
 
         if (correspondentId != null) {
-          // Создаём пакет сообщения и задаём текст и ID корреспондента
           MessagePacket messagePacket = new MessagePacket();
           messagePacket.text = message;
           messagePacket.correspondentId = correspondentId;
 
-          // Отправляем пакет через клиентскую сессию
           clientSession.sendPacket(messagePacket);
 
-          // Отображаем отправленное сообщение в окне чата
-          chatArea.append(username + ": " + message + "\n");
+          if (!selectedUser.equals(username)) {
+            addMessageBubble(username, message, true);
+            chatHistories.computeIfAbsent(selectedUser, k -> new ArrayList<>()).add("Вы: " + message);
+          }
           messageField.setText("");
         } else {
           JOptionPane.showMessageDialog(this, "Не удалось найти ID пользователя.", "Ошибка", JOptionPane.ERROR_MESSAGE);
@@ -102,20 +116,55 @@ public class MainWindow extends JFrame {
     }
   }
 
-  // Метод для обновления списка пользователей
+  private void displayChatHistory(String user) {
+    chatPanel.removeAll();
+    List<String> history = chatHistories.getOrDefault(user, new ArrayList<>());
+    for (String message : history) {
+      boolean isUserMessage = message.startsWith("Вы:");
+      addMessageBubble(isUserMessage ? username : user, message.replaceFirst("Вы: ", ""), isUserMessage);
+    }
+    chatPanel.revalidate();
+    chatPanel.repaint();
+  }
+
+  private void addMessageBubble(String sender, String message, boolean isUserMessage) {
+    JPanel bubblePanel = new JPanel();
+    bubblePanel.setLayout(new FlowLayout(isUserMessage ? FlowLayout.RIGHT : FlowLayout.LEFT, 0, 0));
+    bubblePanel.setBackground(new Color(25, 34, 49));
+
+    JTextArea messageBubble = new JTextArea(message);
+    messageBubble.setEditable(false);
+    messageBubble.setLineWrap(true);
+    messageBubble.setWrapStyleWord(true);
+    messageBubble.setOpaque(true);
+    messageBubble.setBorder(new EmptyBorder(8, 12, 8, 12));
+    messageBubble.setBackground(isUserMessage ? new Color(58, 122, 187) : new Color(47, 54, 64));
+    messageBubble.setForeground(Color.WHITE);
+    messageBubble.setFont(new Font("Arial", Font.PLAIN, 14));
+    messageBubble.setMaximumSize(new Dimension(chatScrollPane.getWidth() * 6 / 10, Integer.MAX_VALUE)); // Ограничение по ширине
+
+    bubblePanel.add(messageBubble);
+    chatPanel.add(bubblePanel);
+
+    chatPanel.revalidate();
+    chatScrollPane.getVerticalScrollBar().setValue(chatScrollPane.getVerticalScrollBar().getMaximum());
+  }
+
   public void updateUserList(List<CorrespondentItem> users) {
     userListModel.clear();
     userIdMap.clear();
 
-    // Добавляем каждого пользователя в локальный список и сохраняем ID
     for (CorrespondentItem user : users) {
       userListModel.addElement(user.login);
-      userIdMap.put(user.login, user.id); // Сохраняем соответствие логина и ID
+      userIdMap.put(user.login, user.id);
     }
   }
 
-  // Метод для отображения сообщений от других пользователей
   public void receiveMessage(String sender, String message) {
-    chatArea.append(sender + ": " + message + "\n");
+    chatHistories.computeIfAbsent(sender, k -> new ArrayList<>()).add(sender + ": " + message);
+
+    if (sender.equals(selectedUser)) {
+      addMessageBubble(sender, message, false);
+    }
   }
 }
